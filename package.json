@@ -1,0 +1,26 @@
+{
+  "name": "african-village-node",
+  "version": "1.0.0",
+  "description": "The African Village — Raspberry Pi node agent daemon",
+  "main": "src/agent.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/agent.js",
+    "dev": "node --watch src/agent.js",
+    "test": "node --test src/tests/*.test.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.39.0",
+    "dotenv": "^16.4.0",
+    "node-fetch": "^3.3.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/theMack/african-village-node.git"
+  },
+  "author": "The African Village Cooperative",
+  "license": "GPL-3.0"
+}
