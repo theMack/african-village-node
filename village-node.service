@@ -1,0 +1,32 @@
+[Unit]
+Description=African Village Node Agent
+Documentation=https://github.com/theMack/african-village-node
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+WorkingDirectory=/opt/village-node
+EnvironmentFile=/opt/village-node/.env
+ExecStart=/usr/bin/node /opt/village-node/src/agent.js
+Restart=always
+RestartSec=15
+StartLimitInterval=300
+StartLimitBurst=5
+
+# Output to journald
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=village-node
+
+# Hardening
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+# Allow network and hardware access needed for TVWS + mesh
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
+
+[Install]
+WantedBy=multi-user.target
