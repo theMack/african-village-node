@@ -30,11 +30,14 @@ export const config = {
     serviceRoleKey: optional("SUPABASE_SERVICE_ROLE_KEY"),
   },
   fcc: {
-    dbUrl: optional(
-      "FCC_DB_URL",
-      "https://geo.spectrumbridge.com/SpectrumBridge/api",
-    ),
+    dbUrl: optional("FCC_DB_URL", null),
+    apiKey: optional("FCC_API_KEY", null),
     queryIntervalMs: parseInt(optional("FCC_QUERY_INTERVAL_MS", "3600000")),
+    staticChannelNum: parseInt(optional("STATIC_TVWS_CHANNEL", "19")),
+    staticFrequencyMhz: parseFloat(
+      optional("STATIC_TVWS_FREQUENCY_MHZ", "530"),
+    ),
+    staticPowerDbw: parseFloat(optional("STATIC_TVWS_POWER_DBW", "6")),
   },
   network: {
     tvwsInterface: optional("TVWS_INTERFACE", "wlan0"),

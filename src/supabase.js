@@ -129,10 +129,10 @@ export async function logSpectrumQuery(channels) {
   const { error } = await supabaseAdmin.from("spectrum_log").insert({
     node_id: config.node.uuid,
     timestamp: new Date().toISOString(),
-    available_channels: channels,
+    available_channels: channels.map((ch) => ch.channel),
     selected_channel: selected?.channel ?? null,
     max_power_dbm: selected?.maxPowerDbw ? selected.maxPowerDbw * 10 : null,
-    database_provider: "fcc_geolocation",
+    database_provider: selected?.source ?? "fcc_geolocation",
   });
 
   if (error) {

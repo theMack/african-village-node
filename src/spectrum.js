@@ -1,149 +1,199 @@
-import { config } from './config.js'
-import { logger } from './logger.js'
-import { logSpectrumQuery } from './supabase.js'
-import { exec } from 'child_process'
-import { promisify } from 'util'
+import { execSync } from "child_process";
+import { promisify } from "util";
+import { exec } from "child_process";
+import { config } from "./config.js";
+import { logger } from "./logger.js";
+import { logSpectrumQuery } from "./supabase.js";
 
-const execAsync = promisify(exec)
+const execAsync = promisify(exec);
 
 // Current channel state
-let currentChannel = null
-let currentFrequencyMhz = null
-let lastQueryTime = null
+let currentChannel = null;
+let currentFrequencyMhz = null;
+let lastQueryTime = null;
+
+// ── Static channel (FCC license 0667-EX-CN-2026, 530 MHz) ────────────────────
+
+function getStaticChannel() {
+  return {
+    channel: config.fcc.staticChannelNum,
+    frequencyMhz: config.fcc.staticFrequencyMhz,
+    maxPowerDbw: config.fcc.staticPowerDbw,
+    source: "static_license",
+  };
+}
 
 // ── FCC geolocation DB query ──────────────────────────────────────────────────
 
-export async function queryAvailableChannels() {
-  const { lat, lng } = config.location
-  const url = `${config.fcc.dbUrl}/tvws/channels?lat=${lat}&lng=${lng}&deviceType=fixed&heightAboveTerrain=10`
+async function queryDatabase() {
+  const url = `${config.fcc.dbUrl}/tvws/channels?lat=${config.location.lat}&lng=${config.location.lng}&deviceType=fixed&heightAboveTerrain=10`;
 
-  logger.info('spectrum', `Querying FCC geolocation DB for ${lat}, ${lng}`)
+  logger.info(
+    "spectrum",
+    `Querying FCC geolocation DB for ${config.location.lat}, ${config.location.lng}`,
+  );
+
+  const response = await fetch(url, {
+    headers: {
+      Accept: "application/json",
+      ...(config.fcc.apiKey
+        ? { Authorization: `Bearer ${config.fcc.apiKey}` }
+        : {}),
+    },
+    signal: AbortSignal.timeout(15000),
+  });
+
+  if (!response.ok) throw new Error(`FCC DB returned ${response.status}`);
+
+  const data = await response.json();
+  const channels = data.availableChannels ?? [];
+  return channels.filter((ch) => ch.maxPowerDbw >= 6);
+}
+
+// ── Primary export: query available channels ──────────────────────────────────
+
+export async function queryAvailableChannels() {
+  // No DB URL configured — use static licensed channel
+  if (!config.fcc.dbUrl) {
+    const ch = getStaticChannel();
+    logger.info(
+      "spectrum",
+      `No FCC DB configured — using static licensed channel`,
+      {
+        channel: ch.channel,
+        frequencyMhz: ch.frequencyMhz,
+        license: "0667-EX-CN-2026",
+      },
+    );
+    lastQueryTime = Date.now();
+    await logSpectrumQuery([ch]);
+    return [ch];
+  }
 
   try {
-    const response = await fetch(url, {
-      headers: { 'Accept': 'application/json' },
-      signal: AbortSignal.timeout(15000),
-    })
-
-    if (!response.ok) {
-      throw new Error(`FCC DB returned ${response.status}`)
-    }
-
-    const data = await response.json()
-    const channels = data.availableChannels ?? []
-
-    // Filter for channels with sufficient power (≥4W EIRP = 6 dBW)
-    const viable = channels.filter(ch => ch.maxPowerDbw >= 6)
-
-    logger.info('spectrum', `${viable.length} viable channels found`, {
-      total: channels.length,
-      viable: viable.length,
-    })
-
-    lastQueryTime = Date.now()
-    await logSpectrumQuery(viable)
-    return viable
-
+    const viable = await queryDatabase();
+    logger.info("spectrum", `${viable.length} viable channels found`);
+    lastQueryTime = Date.now();
+    await logSpectrumQuery(viable);
+    return viable;
   } catch (err) {
-    logger.error('spectrum', 'FCC DB query failed', { error: err.message })
+    logger.error("spectrum", "FCC DB query failed", { error: err.message });
 
-    // Return last known channel as fallback
+    // Fall back to last known channel, then static
     if (currentChannel) {
-      logger.warn('spectrum', `Using last known channel ${currentChannel} as fallback`)
-      return [{ channel: currentChannel, frequencyMhz: currentFrequencyMhz, maxPowerDbw: 6 }]
+      logger.warn(
+        "spectrum",
+        `Using last known channel ${currentChannel} as fallback`,
+      );
+      return [
+        {
+          channel: currentChannel,
+          frequencyMhz: currentFrequencyMhz,
+          maxPowerDbw: 6,
+        },
+      ];
     }
 
-    return []
+    logger.warn("spectrum", "Falling back to static licensed channel");
+    return [getStaticChannel()];
   }
 }
 
 // ── Channel selection ─────────────────────────────────────────────────────────
 
 export function selectOptimalChannel(channels) {
-  if (!channels.length) return null
-
-  // Sort by max power descending, then channel number ascending (lower = better propagation)
+  if (!channels.length) return null;
   const sorted = [...channels].sort((a, b) => {
-    if (b.maxPowerDbw !== a.maxPowerDbw) return b.maxPowerDbw - a.maxPowerDbw
-    return a.channel - b.channel
-  })
-
-  return sorted[0]
+    if (b.maxPowerDbw !== a.maxPowerDbw) return b.maxPowerDbw - a.maxPowerDbw;
+    return a.channel - b.channel;
+  });
+  return sorted[0];
 }
 
 // ── Radio configuration ───────────────────────────────────────────────────────
 
 export async function configureRadio(channel) {
   if (!channel) {
-    logger.error('spectrum', 'Cannot configure radio — no channel available')
-    return false
+    logger.error("spectrum", "Cannot configure radio — no channel available");
+    return false;
   }
 
-  const iface = config.network.tvwsInterface
-  logger.info('spectrum', `Configuring ${iface} on channel ${channel.channel} (${channel.frequencyMhz} MHz)`)
+  const iface = config.network.tvwsInterface;
+  logger.info(
+    "spectrum",
+    `Configuring ${iface} on channel ${channel.channel} (${channel.frequencyMhz} MHz)`,
+  );
 
   try {
-    // Bring interface down
-    await execAsync(`sudo ip link set ${iface} down`)
+    await execAsync(`sudo ip link set ${iface} down`);
+    await execAsync(`sudo iw ${iface} set type managed`);
+    await execAsync(`sudo ip link set ${iface} up`);
+    const freqKhz = channel.frequencyMhz * 1000;
+    await execAsync(`sudo iw ${iface} set freq ${freqKhz}`);
 
-    // Set to managed mode for TVWS operation
-    await execAsync(`sudo iw ${iface} set type managed`)
+    currentChannel = channel.channel;
+    currentFrequencyMhz = channel.frequencyMhz;
 
-    // Bring interface back up
-    await execAsync(`sudo ip link set ${iface} up`)
-
-    // Set frequency (convert MHz to kHz for iw)
-    const freqKhz = channel.frequencyMhz * 1000
-    await execAsync(`sudo iw ${iface} set freq ${freqKhz}`)
-
-    currentChannel = channel.channel
-    currentFrequencyMhz = channel.frequencyMhz
-
-    logger.info('spectrum', `Radio configured: channel ${currentChannel}, ${currentFrequencyMhz} MHz`)
-    return true
-
+    logger.info(
+      "spectrum",
+      `Radio configured: channel ${currentChannel}, ${currentFrequencyMhz} MHz`,
+    );
+    return true;
   } catch (err) {
-    logger.error('spectrum', 'Radio configuration failed', { error: err.message })
-    return false
+    logger.error("spectrum", "Radio configuration failed", {
+      error: err.message,
+    });
+    return false;
   }
 }
 
 // ── Signal strength ───────────────────────────────────────────────────────────
 
 export async function getSignalStrength() {
-  const iface = config.network.tvwsInterface
+  const iface = config.network.tvwsInterface;
   try {
-    const { stdout } = await execAsync(`iw ${iface} station dump`)
-    const match = stdout.match(/signal:\s+([-\d]+)\s+dBm/)
-    return match ? parseInt(match[1]) : null
+    const { stdout } = await execAsync(`iw ${iface} station dump`);
+    const match = stdout.match(/signal:\s+([-\d]+)\s+dBm/);
+    return match ? parseInt(match[1]) : null;
   } catch {
-    return null
+    return null;
   }
 }
 
 // ── Getters ───────────────────────────────────────────────────────────────────
 
-export function getCurrentChannel() { return currentChannel }
-export function getCurrentFrequency() { return currentFrequencyMhz }
-export function getLastQueryTime() { return lastQueryTime }
+export function getCurrentChannel() {
+  return currentChannel;
+}
+export function getCurrentFrequency() {
+  return currentFrequencyMhz;
+}
+export function getLastQueryTime() {
+  return lastQueryTime;
+}
 
 // ── Scheduled re-query ────────────────────────────────────────────────────────
 
 export async function refreshSpectrum() {
-  const channels = await queryAvailableChannels()
-  const optimal = selectOptimalChannel(channels)
+  const channels = await queryAvailableChannels();
+  const optimal = selectOptimalChannel(channels);
 
   if (!optimal) {
-    logger.warn('spectrum', 'No viable channels found on re-query')
-    return false
+    logger.warn("spectrum", "No viable channels found on re-query");
+    return false;
   }
 
-  // Only reconfigure if channel has changed
   if (optimal.channel !== currentChannel) {
-    logger.info('spectrum', `Channel change: ${currentChannel} → ${optimal.channel}`)
-    return await configureRadio(optimal)
+    logger.info(
+      "spectrum",
+      `Channel change: ${currentChannel} → ${optimal.channel}`,
+    );
+    return await configureRadio(optimal);
   }
 
-  logger.debug('spectrum', `Channel ${currentChannel} still optimal — no change`)
-  return true
+  logger.debug(
+    "spectrum",
+    `Channel ${currentChannel} still optimal — no change`,
+  );
+  return true;
 }
