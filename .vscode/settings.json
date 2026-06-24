@@ -11,6 +11,7 @@
     "IFACE",
     "Imager",
     "journalctl",
+    "KVDPA",
     "lsusb",
     "mgmt",
     "nonint",

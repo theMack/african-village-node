@@ -13,6 +13,7 @@ function optional(key, fallback = null) {
 export const config = {
   node: {
     id: require("NODE_ID"),
+    uuid: require("NODE_UUID"),
     name: require("NODE_NAME"),
     type: optional("NODE_TYPE", "anchor"),
     address: optional("ADDRESS"),

@@ -22,24 +22,18 @@ if (!config.supabase.serviceRoleKey) {
 }
 
 // ── Node registry ─────────────────────────────────────────────────────────────
+// Row already exists in nodes table — update by uuid, never insert
 
 export async function registerNode(nodeData) {
-  const { error } = await supabaseAdmin.from("nodes").upsert(
-    {
-      node_id: config.node.id,
-      node_name: config.node.name,
-      node_type: config.node.type,
-      address: config.node.address,
-      neighborhood: config.node.neighborhood,
-      anchor_site: config.node.anchorSite,
-      status: "active",
-      location: `POINT(${config.location.lng} ${config.location.lat})`,
+  const { error } = await supabaseAdmin
+    .from("nodes")
+    .update({
+      status: "online",
       hardware_version: nodeData.hardwareVersion ?? "1.0",
       firmware_version: nodeData.firmwareVersion ?? process.version,
       last_heartbeat: new Date().toISOString(),
-    },
-    { onConflict: "node_id" },
-  );
+    })
+    .eq("id", config.node.uuid);
 
   if (error) {
     logger.error("supabase", "Node registration failed", {
@@ -48,7 +42,10 @@ export async function registerNode(nodeData) {
     return false;
   }
 
-  logger.info("supabase", `Node registered: ${config.node.id}`);
+  logger.info(
+    "supabase",
+    `Node registered: ${config.node.name} (${config.node.uuid})`,
+  );
   return true;
 }
 
@@ -56,12 +53,11 @@ export async function updateHeartbeat(telemetry) {
   const { error } = await supabaseAdmin
     .from("nodes")
     .update({
-      status: "active",
+      status: "online",
       last_heartbeat: new Date().toISOString(),
       tvws_channel: telemetry.tvwsChannel ?? null,
-      tvws_frequency_mhz: telemetry.tvwsFrequencyMhz ?? null,
     })
-    .eq("node_id", config.node.id);
+    .eq("id", config.node.uuid);
 
   if (error) {
     logger.error("supabase", "Heartbeat update failed", {
@@ -77,7 +73,7 @@ export async function updateStatus(status) {
   const { error } = await supabaseAdmin
     .from("nodes")
     .update({ status, last_heartbeat: new Date().toISOString() })
-    .eq("node_id", config.node.id);
+    .eq("id", config.node.uuid);
 
   if (error) {
     logger.error("supabase", "Status update failed", { error: error.message });
@@ -88,13 +84,12 @@ export async function updateStatus(status) {
 
 export async function writeTelemetry(telemetry) {
   const { error } = await supabaseAdmin.from("node_telemetry").insert({
-    node_id: config.node.id,
-    tvws_channel: telemetry.tvwsChannel,
-    tvws_frequency_mhz: telemetry.tvwsFrequencyMhz,
-    tvws_power_dbm: telemetry.tvwsPowerDbm,
-    mesh_peers: telemetry.meshPeers,
+    node_id: config.node.uuid,
+    timestamp: new Date().toISOString(),
+    signal_strength_dbm: telemetry.tvwsPowerDbm ?? null,
+    mesh_peer_count: telemetry.meshPeers ?? 0,
+    tvws_channel: telemetry.tvwsChannel ?? null,
     uptime_seconds: Math.floor(process.uptime()),
-    recorded_at: new Date().toISOString(),
   });
 
   if (error) {
@@ -108,9 +103,9 @@ export async function dispatchSignal(channel, eventType, payload) {
   const { error } = await supabaseAdmin.from("signal_events").insert({
     channel,
     event_type: eventType,
-    source: config.node.id,
+    publisher_pillar: "infrastructure",
     payload,
-    created_at: new Date().toISOString(),
+    published_at: new Date().toISOString(),
   });
 
   if (error) {
@@ -129,10 +124,15 @@ export async function dispatchSignal(channel, eventType, payload) {
 // ── Spectrum log ──────────────────────────────────────────────────────────────
 
 export async function logSpectrumQuery(channels) {
+  const selected = channels[0] ?? null;
+
   const { error } = await supabaseAdmin.from("spectrum_log").insert({
-    node_id: config.node.id,
+    node_id: config.node.uuid,
+    timestamp: new Date().toISOString(),
     available_channels: channels,
-    queried_at: new Date().toISOString(),
+    selected_channel: selected?.channel ?? null,
+    max_power_dbm: selected?.maxPowerDbw ? selected.maxPowerDbw * 10 : null,
+    database_provider: "fcc_geolocation",
   });
 
   if (error) {

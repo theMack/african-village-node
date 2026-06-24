@@ -1,167 +1,190 @@
-import { createWriteStream, mkdirSync, existsSync, statSync, readdirSync, unlinkSync } from 'fs'
-import { join } from 'path'
-import { config } from './config.js'
-import { logger } from './logger.js'
-import { supabase } from './supabase.js'
+import {
+  createWriteStream,
+  mkdirSync,
+  existsSync,
+  statSync,
+  readdirSync,
+  unlinkSync,
+} from "fs";
+import { join } from "path";
+import { config } from "./config.js";
+import { logger } from "./logger.js";
+import { supabase } from "./supabase.js";
 
-const CACHE_DIRS = ['live', 'archive']
+const CACHE_DIRS = ["live", "archive"];
 
 // ── Initialization ────────────────────────────────────────────────────────────
 
 export function initCache() {
-  const base = config.cache.dir
+  const base = config.cache.dir;
 
   if (!existsSync(base)) {
-    mkdirSync(base, { recursive: true })
-    logger.info('cache', `Created cache directory: ${base}`)
+    mkdirSync(base, { recursive: true });
+    logger.info("cache", `Created cache directory: ${base}`);
   }
 
   for (const dir of CACHE_DIRS) {
-    const path = join(base, dir)
+    const path = join(base, dir);
     if (!existsSync(path)) {
-      mkdirSync(path, { recursive: true })
+      mkdirSync(path, { recursive: true });
     }
   }
 
-  logger.info('cache', `Cache initialized at ${base}`)
+  logger.info("cache", `Cache initialized at ${base}`);
 }
 
 // ── Manifest sync ─────────────────────────────────────────────────────────────
 
 export async function syncManifest() {
-  logger.info('cache', 'Syncing content manifest from Supabase')
+  logger.info("cache", "Syncing content manifest from Supabase");
 
   const { data: content, error } = await supabase
-    .from('content')
-    .select('id, title, file_path, file_size, content_type, updated_at')
-    .eq('cache_on_nodes', true)
-    .order('updated_at', { ascending: false })
-    .limit(100)
+    .from("content")
+    .select("id, title, storage_path, public_url, content_type, published_at")
+    .not("storage_path", "is", null)
+    .order("published_at", { ascending: false })
+    .limit(100);
 
   if (error) {
-    logger.error('cache', 'Manifest fetch failed', { error: error.message })
-    return []
+    logger.error("cache", "Manifest fetch failed", { error: error.message });
+    return [];
   }
 
-  logger.info('cache', `Manifest: ${content.length} items`)
-  return content ?? []
+  logger.info("cache", `Manifest: ${content.length} items`);
+  return content ?? [];
 }
 
 // ── File download ─────────────────────────────────────────────────────────────
 
-async function downloadFile(filePath, destPath) {
+async function downloadFile(storagePath, destPath) {
   try {
     const { data, error } = await supabase.storage
-      .from('village-content')
-      .download(filePath)
+      .from("village-content")
+      .download(storagePath);
 
-    if (error) throw new Error(error.message)
+    if (error) throw new Error(error.message);
 
-    const buffer = await data.arrayBuffer()
-    const { writeFile } = await import('fs/promises')
-    await writeFile(destPath, Buffer.from(buffer))
+    const buffer = await data.arrayBuffer();
+    const { writeFile } = await import("fs/promises");
+    await writeFile(destPath, Buffer.from(buffer));
 
-    logger.debug('cache', `Downloaded: ${filePath}`)
-    return true
+    logger.debug("cache", `Downloaded: ${storagePath}`);
+    return true;
   } catch (err) {
-    logger.warn('cache', `Download failed: ${filePath}`, { error: err.message })
-    return false
+    logger.warn("cache", `Download failed: ${storagePath}`, {
+      error: err.message,
+    });
+    return false;
   }
 }
 
 // ── Full sync ─────────────────────────────────────────────────────────────────
 
 export async function syncCache() {
-  logger.info('cache', 'Starting cache sync')
+  logger.info("cache", "Starting cache sync");
 
-  const manifest = await syncManifest()
-  if (!manifest.length) return
+  const manifest = await syncManifest();
+  if (!manifest.length) return;
 
-  let downloaded = 0
-  let skipped = 0
-  let failed = 0
+  let downloaded = 0;
+  let skipped = 0;
+  let failed = 0;
 
   for (const item of manifest) {
-    const subDir = item.content_type === 'live' ? 'live' : 'archive'
-    const filename = item.file_path.split('/').pop()
-    const destPath = join(config.cache.dir, subDir, filename)
+    const subDir = item.content_type === "live" ? "live" : "archive";
+    const filename = item.storage_path.split("/").pop();
+    const destPath = join(config.cache.dir, subDir, filename);
 
     // Skip if already cached and not updated
     if (existsSync(destPath)) {
-      const stat = statSync(destPath)
-      const cachedAt = stat.mtimeMs
-      const updatedAt = new Date(item.updated_at).getTime()
+      const stat = statSync(destPath);
+      const cachedAt = stat.mtimeMs;
+      const updatedAt = new Date(item.published_at).getTime();
       if (cachedAt >= updatedAt) {
-        skipped++
-        continue
+        skipped++;
+        continue;
       }
     }
 
     // Check available disk space before downloading
-    const usedGb = getCacheSize() / (1024 ** 3)
+    const usedGb = getCacheSize() / 1024 ** 3;
     if (usedGb >= config.cache.maxGb * 0.9) {
-      logger.warn('cache', `Cache near capacity (${usedGb.toFixed(1)}GB / ${config.cache.maxGb}GB) — purging old files`)
-      await purgeOldFiles()
+      logger.warn(
+        "cache",
+        `Cache near capacity (${usedGb.toFixed(1)}GB / ${config.cache.maxGb}GB) — purging old files`,
+      );
+      await purgeOldFiles();
     }
 
-    const success = await downloadFile(item.file_path, destPath)
-    if (success) downloaded++
-    else failed++
+    const success = await downloadFile(item.storage_path, destPath);
+    if (success) downloaded++;
+    else failed++;
   }
 
-  logger.info('cache', `Sync complete — downloaded: ${downloaded}, skipped: ${skipped}, failed: ${failed}`)
+  logger.info(
+    "cache",
+    `Sync complete — downloaded: ${downloaded}, skipped: ${skipped}, failed: ${failed}`,
+  );
 }
 
 // ── Cache size ────────────────────────────────────────────────────────────────
 
 export function getCacheSize() {
-  let total = 0
+  let total = 0;
   for (const dir of CACHE_DIRS) {
-    const path = join(config.cache.dir, dir)
-    if (!existsSync(path)) continue
+    const path = join(config.cache.dir, dir);
+    if (!existsSync(path)) continue;
     for (const file of readdirSync(path)) {
       try {
-        total += statSync(join(path, file)).size
-      } catch { /* skip */ }
+        total += statSync(join(path, file)).size;
+      } catch {
+        /* skip */
+      }
     }
   }
-  return total
+  return total;
 }
 
 // ── Purge old files ───────────────────────────────────────────────────────────
 
 async function purgeOldFiles() {
-  const archiveDir = join(config.cache.dir, 'archive')
-  if (!existsSync(archiveDir)) return
+  const archiveDir = join(config.cache.dir, "archive");
+  if (!existsSync(archiveDir)) return;
 
   const files = readdirSync(archiveDir)
-    .map(f => ({ name: f, path: join(archiveDir, f), mtime: statSync(join(archiveDir, f)).mtimeMs }))
-    .sort((a, b) => a.mtime - b.mtime) // oldest first
+    .map((f) => ({
+      name: f,
+      path: join(archiveDir, f),
+      mtime: statSync(join(archiveDir, f)).mtimeMs,
+    }))
+    .sort((a, b) => a.mtime - b.mtime);
 
-  // Remove oldest 20% of archive files
-  const toRemove = Math.ceil(files.length * 0.2)
+  const toRemove = Math.ceil(files.length * 0.2);
   for (const file of files.slice(0, toRemove)) {
-    unlinkSync(file.path)
-    logger.debug('cache', `Purged: ${file.name}`)
+    unlinkSync(file.path);
+    logger.debug("cache", `Purged: ${file.name}`);
   }
 
-  logger.info('cache', `Purged ${toRemove} old archive files`)
+  logger.info("cache", `Purged ${toRemove} old archive files`);
 }
 
 // ── Scheduled sync ────────────────────────────────────────────────────────────
 
-let syncInterval = null
+let syncInterval = null;
 
 export function startCacheSync() {
-  if (syncInterval) return
-  logger.info('cache', `Scheduled sync every ${config.timing.cacheSyncMs / 3600000}h`)
-  syncCache() // sync immediately on start
-  syncInterval = setInterval(syncCache, config.timing.cacheSyncMs)
+  if (syncInterval) return;
+  logger.info(
+    "cache",
+    `Scheduled sync every ${config.timing.cacheSyncMs / 3600000}h`,
+  );
+  syncCache();
+  syncInterval = setInterval(syncCache, config.timing.cacheSyncMs);
 }
 
 export function stopCacheSync() {
   if (syncInterval) {
-    clearInterval(syncInterval)
-    syncInterval = null
+    clearInterval(syncInterval);
+    syncInterval = null;
   }
 }
