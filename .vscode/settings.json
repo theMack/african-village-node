@@ -1,0 +1,30 @@
+{
+  "cSpell.words": [
+    "AWUS",
+    "Backhaul",
+    "batctl",
+    "datasheet",
+    "dtparam",
+    "geolocation",
+    "heatsinks",
+    "ibss",
+    "IFACE",
+    "Imager",
+    "journalctl",
+    "lsusb",
+    "mgmt",
+    "nonint",
+    "NOPASSWD",
+    "Nucleo",
+    "Ralink",
+    "raspberrypi",
+    "raspi",
+    "rootfs",
+    "timedatectl",
+    "timesyncd",
+    "TVWS",
+    "UART",
+    "vcgencmd",
+    "wlan"
+  ]
+}

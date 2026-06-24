@@ -1,0 +1,56 @@
+import "dotenv/config";
+
+function require(key) {
+  const val = process.env[key];
+  if (!val) throw new Error(`[config] Missing required env var: ${key}`);
+  return val;
+}
+
+function optional(key, fallback = null) {
+  return process.env[key] ?? fallback;
+}
+
+export const config = {
+  node: {
+    id: require("NODE_ID"),
+    name: require("NODE_NAME"),
+    type: optional("NODE_TYPE", "anchor"),
+    address: optional("ADDRESS"),
+    neighborhood: optional("NEIGHBORHOOD"),
+    anchorSite: optional("ANCHOR_SITE"),
+  },
+  location: {
+    lat: parseFloat(require("LATITUDE")),
+    lng: parseFloat(require("LONGITUDE")),
+  },
+  supabase: {
+    url: require("SUPABASE_URL"),
+    anonKey: require("SUPABASE_ANON_KEY"),
+    serviceRoleKey: optional("SUPABASE_SERVICE_ROLE_KEY"),
+  },
+  fcc: {
+    dbUrl: optional(
+      "FCC_DB_URL",
+      "https://geo.spectrumbridge.com/SpectrumBridge/api",
+    ),
+    queryIntervalMs: parseInt(optional("FCC_QUERY_INTERVAL_MS", "3600000")),
+  },
+  network: {
+    tvwsInterface: optional("TVWS_INTERFACE", "wlan0"),
+    meshInterface: optional("MESH_INTERFACE", "wlan1"),
+    meshIp: optional("MESH_IP", "10.10.0.1"),
+    meshSsid: optional("MESH_SSID", "village-mesh"),
+    meshChannel: optional("MESH_CHANNEL", "2412"),
+  },
+  timing: {
+    heartbeatMs: parseInt(optional("HEARTBEAT_INTERVAL_MS", "60000")),
+    cacheSyncMs: parseInt(optional("CACHE_SYNC_INTERVAL_MS", "21600000")),
+  },
+  cache: {
+    dir: optional("CACHE_DIR", "/opt/village-node/cache"),
+    maxGb: parseInt(optional("CACHE_MAX_GB", "8")),
+  },
+  log: {
+    level: optional("LOG_LEVEL", "info"),
+  },
+};
